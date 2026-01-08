@@ -2,7 +2,6 @@
 #include <sstream>
 #include <fstream>
 #include <limits>
-#include <omp.h>
 #include <iostream>
 #include <numeric>
 #include <Eigen/Sparse>  
@@ -20,23 +19,6 @@ using namespace std;
 using SpMat = Eigen::SparseMatrix<double>;
 using EdgeGenerator = function<vector<pair<int, int>>(double, int)>;
 
-
-struct Stats {
-    double mean;
-    double se;
-};
-
-struct AllStats {
-    Stats geodesic;
-    vector<Stats> disordered;
-    vector<Stats> ordered;
-    Stats exact;
-    vector<Stats> area;
-    Stats length;
-    vector<Stats> width;
-    int num_zero;
-};
-
 struct RawData {
     double geodesic;
     vector<double> disordered;
@@ -48,161 +30,96 @@ struct RawData {
     bool no_path;
 };
 
-struct ProcessedData {
-    vector<RawData> data;
-    vector<bool> no_path_flags;
-    int num_zero;
-};
+// vector<pair<int, int>> edge_list_2d_site(double p, int n);
+vector<pair<int, int>> edge_list_2d_bond(double p, int n); // given bond probability p, generate an edge list that represents a lattice
 
-vector<pair<int, int>> edge_list_2d_site(double p, int n);
-vector< pair<int, int> > edge_list_2d_bond(double p, int n);
-int compute_dual_area(const unordered_set<int>& strip_nodes, int n);
-double cross_sectional_width(const vector<int>& geodesic, int n, 
-                             const unordered_set<int>& strip_nodes);
-unordered_set<int> ordered_strip_nodes(const vector<int>& geodesic_ids, int dist, int n);
-vector<pair<int, int>> get_strip_edges_from_ids(unordered_set<int> strip_nodes,
+int compute_dual_area(const unordered_set<int>& strip_nodes, int n); // computes the area of the strip by counting the number of nodes in the strip's dual graph
+double cross_sectional_width(const vector<int>& geodesic, int n,
+                             const unordered_set<int>& strip_nodes); // computes the width of a strip about the geodesic
+unordered_set<int> ordered_strip_nodes(const vector<int>& geodesic_ids, int dist, int n); // generates a list of nodes in the ordered strip about the geodesic, given the geodesic
+
+vector<pair<int, int>> get_strip_edges_from_ids( // creates an edge list pertaining to the strip 
+    unordered_set<int> strip_nodes,
     const vector<pair<int, int>>& edges, int n, bool ordered
 );
-SpMat laplacian_2d(const vector<pair<int, int> >& edges, int n);
-double resistance_distance_2d(int i, int j, const SpMat& L, double s);
-ProcessedData simulate_all(int id_start, int id_end, double p);
-RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator edge_list_fn);
-void save_data(string filename, pair<int, int> start, pair<int, int> end);
-AllStats make_stats(const ProcessedData& y, bool with_zero);
+
+SpMat laplacian_2d(const vector<pair<int, int>>& edges, int n); // generates the Laplacian matrix of the lattice given an edge list representing the lattice
+double resistance_distance_2d(int i, int j, const SpMat& L, double s); // computes the resistance between two endpoints across the lattice
+
+RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator edge_list_fn); 
+vector<RawData> simulate_all(int id_start, int id_end, double p);
+
+void write_raw_csv(const string& filename, double p, const vector<RawData>& sims);
 
 const int n = 1000; // we are studying diffusion on a square, 2D n x n lattice
 const double s = 1e-2; // inverse-time parameter in Laplace Domain
-int num_sims = []{
-    const char* v = std::getenv("NUM_SIMS");
-    return v ? std::max(1, atoi(v)) : 10;  // default to 10
-}(); // number of lattice configurations for each value of p
+int num_sims = 10 // number of lattice configurations for each value of p, adjust as necessary
 const int max_dist = 5;
-const int num_data = 10;
-const double p_c = 0.5;
+const int num_data = 10; // number of configurations for each value of p
+const double p_c = 0.5; // percolation threshold, we are interested in conductance statistics as p -> p_c
 const double ln_min = log(0.5001 - p_c);
 const double ln_max = log(0.6 - p_c);
 
 int main(int argc, char** argv) {
-    Eigen::setNbThreads(1);
-    omp_set_num_threads(omp_get_max_threads());
+    int p_index = (argc > 1) ? atoi(argv[1]) : 0;
 
-    int p_index = 0;
-    if (argc > 1) p_index = atoi(argv[1]);
-
-    const char* jobid  = getenv("SLURM_JOB_ID");
-    const char* taskid = getenv("SLURM_ARRAY_TASK_ID");
-
-    std::ostringstream fname;
-    fname << "output_job" << (jobid ? jobid : "local")
-          << "_task" << (taskid ? taskid : "0")
-          << ".csv";
-
-    save_data(fname.str(), {249,249}, {749,749}, p_index);
-}
-
-
-
-
-void save_data(string filename, pair<int, int> start, pair<int, int> end, int p_index) {
+    // fixed endpoints
+    pair<int,int> start{249,249}, end{749,749};
     int id_start = pair_to_id(start.first, start.second, n);
     int id_end   = pair_to_id(end.first, end.second, n);
 
-    // compute the p for this index
+    // log-spaced p above p_c
     double ln_offset = ln_min + p_index * (ln_max - ln_min) / (num_data - 1);
     double p = p_c + exp(ln_offset);
     cout << "Percolation probability: " << p << "\n";
 
-    // run simulation
-    const auto y             = simulate_all(id_start, id_end, p);
-    const auto y_with_zero   = make_stats(y, true);
-    const auto y_without_zero= make_stats(y, false);
-    int num_zero             = y_with_zero.num_zero;
+    // run sims (raw)
+    vector<RawData> sims = simulate_all(id_start, id_end, p);
 
-    // open CSV for this p
+    // write raw CSV (one row per simulation)
+    string filename = "raw_pindex_" + to_string(p_index) + ".csv";
+    write_raw_csv(filename, p, sims);
+
+    cout << "Saved data to " << filename << "\n";
+    return 0;
+}
+
+void write_raw_csv(const string& filename, double p, const vector<RawData>& sims) {
     ofstream out(filename);
 
-    // header (same as your current header code)
-    out << "p,geodesic_mean,geodesic_se,";
-    for (int j = 0; j < max_dist; ++j) {
-        out << "disordered_" << j+1 << "_mean,"
-            << "disordered_" << j+1 << "_se,"
-            << "ordered_"    << j+1 << "_mean,"
-            << "ordered_"    << j+1 << "_se,";
-    }
-    out << "exact_mean,exact_se,";
-    for (int j = 0; j < max_dist; ++j)
-        out << "area_" << j+1 << "_mean,area_" << j+1 << "_se,";
-    out << "length_mean,length_se,";
-    for (int j = 0; j < max_dist; ++j)
-        out << "width_" << j+1 << "_mean,width_" << j+1 << "_se,";
-    out << "geodesic_mean_zero,geodesic_se_zero,";
-    for (int j = 0; j < max_dist; ++j) {
-        out << "disordered_" << j+1 << "_mean_zero,"
-            << "disordered_" << j+1 << "_se_zero,"
-            << "ordered_"    << j+1 << "_mean_zero,"
-            << "ordered_"    << j+1 << "_se_zero,";
-    }
-    out << "exact_mean_zero,exact_se_zero,";
-    for (int j = 0; j < max_dist; ++j)
-        out << "area_" << j+1 << "_mean_zero,area_" << j+1 << "_se_zero,";
-    out << "length_mean_zero,length_se_zero,";
-    for (int j = 0; j < max_dist; ++j)
-        out << "width_" << j+1 << "_mean_zero,width_" << j+1 << "_se_zero,";
-    out << "num_zero\n";
+    // header
+    out << "sim,p,no_path,geodesic,exact,length";
+    for (int j = 1; j <= max_dist; ++j) out << ",disordered_" << j;
+    for (int j = 1; j <= max_dist; ++j) out << ",ordered_" << j;
+    for (int j = 1; j <= max_dist; ++j) out << ",area_" << j;
+    for (int j = 1; j <= max_dist; ++j) out << ",width_" << j;
+    out << "\n";
 
-    // data row
-    out << p << ","
-        << y_without_zero.geodesic.mean << "," << y_without_zero.geodesic.se << ",";
-    for (int j = 0; j < max_dist; ++j)
-        out << y_without_zero.disordered[j].mean << "," << y_without_zero.disordered[j].se << ","
-            << y_without_zero.ordered[j].mean    << "," << y_without_zero.ordered[j].se    << ",";
-    out << y_without_zero.exact.mean << "," << y_without_zero.exact.se << ",";
-    for (int j = 0; j < max_dist; ++j)
-        out << y_without_zero.area[j].mean << "," << y_without_zero.area[j].se << ",";
-    out << y_without_zero.length.mean << "," << y_without_zero.length.se << ",";
-    for (int j = 0; j < max_dist; ++j)
-        out << y_without_zero.width[j].mean << "," << y_without_zero.width[j].se << ",";
-    out << y_with_zero.geodesic.mean << "," << y_with_zero.geodesic.se << ",";
-    for (int j = 0; j < max_dist; ++j)
-        out << y_with_zero.disordered[j].mean << "," << y_with_zero.disordered[j].se << ","
-            << y_with_zero.ordered[j].mean    << "," << y_with_zero.ordered[j].se    << ",";
-    out << y_with_zero.exact.mean << "," << y_with_zero.exact.se << ",";
-    for (int j = 0; j < max_dist; ++j)
-        out << y_with_zero.area[j].mean << "," << y_with_zero.area[j].se << ",";
-    out << y_with_zero.length.mean << "," << y_with_zero.length.se << ",";
-    for (int j = 0; j < max_dist; ++j)
-        out << y_with_zero.width[j].mean << "," << y_with_zero.width[j].se << ",";
-    out << num_zero << "\n";
+    // rows
+    for (int i = 0; i < (int)sims.size(); ++i) {
+        const auto& r = sims[i];
+        out << i << "," << p << "," << (r.no_path ? 1 : 0) << ","
+            << r.geodesic << "," << r.exact << "," << r.length;
 
-    out.close();
-    cout << "Saved data to " << filename << "\n";
+        for (double x : r.disordered) out << "," << x;
+        for (double x : r.ordered)    out << "," << x;
+        for (double x : r.area)       out << "," << x;
+        for (double x : r.width)      out << "," << x;
+
+        out << "\n";
+    }
 }
 
 
-ProcessedData simulate_all(int id_start, int id_end, double p) {
-    int num_zero = 0;
-    vector<RawData> all_data(num_sims);
-    vector<bool> no_path_flags(num_sims, false);  
+vector<RawData> simulate_all(int id_start, int id_end, double p) {
+    vector<RawData> all_data;
+    all_data.reserve(num_sims);
 
-    #pragma omp parallel for schedule(dynamic,1)
-    for (int i = 0; i < num_sims; i++) {
-        uint64_t seed = 0xcbf29ce484222325ULL
-                  ^ (uint64_t)i * 0x100000001b3ULL
-                  ^ (uint64_t)std::llround((p - 0.5)*1e9);
-        auto c = simulate_conductances(id_start, id_end, p, edge_list_2d_bond);
-        all_data[i] = c;
-
-        if (c.no_path) {
-            no_path_flags[i] = true;
-            #pragma omp atomic
-                num_zero++;
-        }
+    for (int i = 0; i < num_sims; ++i) {
+        all_data.push_back(simulate_conductances(id_start, id_end, p, edge_list_2d_bond));
     }
-
-    return {all_data, no_path_flags, num_zero};
+    return all_data;
 }
-
-
 
 AllStats make_stats(const ProcessedData& y, bool with_zero) {
     const auto& sim_data = y.data;
