@@ -121,60 +121,6 @@ vector<RawData> simulate_all(int id_start, int id_end, double p) {
     return all_data;
 }
 
-AllStats make_stats(const ProcessedData& y, bool with_zero) {
-    const auto& sim_data = y.data;
-    const auto& flags = y.no_path_flags;
-
-    vector<vector<double>> disordered_vals(max_dist);
-    vector<vector<double>> ordered_vals(max_dist);
-    vector<vector<double>> area_vals(max_dist);
-    vector<vector<double>> width_vals(max_dist);
-    vector<double> geodesic_vals;
-    vector<double> exact_vals;
-    vector<double> length_vals;
-
-    for (size_t i = 0; i < sim_data.size(); ++i) {
-        if (!with_zero && flags[i]) continue;
-
-        const RawData& sim = sim_data[i];
-        geodesic_vals.push_back(sim.geodesic);
-        exact_vals.push_back(sim.exact);
-        length_vals.push_back(sim.length);
-
-        for (int j = 0; j < max_dist; ++j) {
-            disordered_vals[j].push_back(sim.disordered[j]);
-            ordered_vals[j].push_back(sim.ordered[j]);
-            area_vals[j].push_back(sim.area[j]);
-            width_vals[j].push_back(sim.width[j]);
-        }
-    }
-
-    int denom = geodesic_vals.size();
-    auto compute = [denom](const vector<double>& v) -> Stats {
-        if (denom == 0) return {0.0, 0.0};
-        double m = mean(v);
-        return {m, stdev(v, m) / sqrt(denom)};
-    };
-
-    vector<Stats> disordered(max_dist), ordered(max_dist), area(max_dist), width(max_dist);
-    for (int i = 0; i < max_dist; ++i) {
-        disordered[i] = compute(disordered_vals[i]);
-        ordered[i] = compute(ordered_vals[i]);
-        area[i] = compute(area_vals[i]);
-        width[i] = compute(width_vals[i]);
-    }
-
-    Stats geodesic_stat = compute(geodesic_vals);
-    Stats exact_stat = compute(exact_vals);
-    Stats length_stat = compute(length_vals);
-
-    return {
-        geodesic_stat, disordered, ordered,
-        exact_stat, area, length_stat, width, y.num_zero
-    };
-}
-
-
 RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator edge_list_fn) {
     auto edges = edge_list_fn(p, n);
     auto adj = edge_list_to_adjacency_list(edges, n);
