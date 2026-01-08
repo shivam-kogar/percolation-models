@@ -1,9 +1,10 @@
 #include <vector>
-#include <sstream>
 #include <fstream>
-#include <limits>
 #include <iostream>
-#include <numeric>
+#include <cmath>
+#include <string>
+#include <utility>
+#include <cstdlib>
 #include <Eigen/Sparse>  
 #include "edge_list.hpp"
 #include "laplacian.hpp"
@@ -53,7 +54,7 @@ void write_raw_csv(const string& filename, double p, const vector<RawData>& sims
 
 const int n = 1000; // we are studying diffusion on a square, 2D n x n lattice
 const double s = 1e-2; // inverse-time parameter in Laplace Domain
-int num_sims = 10 // number of lattice configurations for each value of p, adjust as necessary
+const int num_sims = 10; // number of lattice configurations for each value of p, adjust as necessary
 const int max_dist = 5;
 const int num_data = 10; // number of configurations for each value of p
 const double p_c = 0.5; // percolation threshold, we are interested in conductance statistics as p -> p_c
