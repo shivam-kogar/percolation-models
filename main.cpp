@@ -21,17 +21,18 @@ using SpMat = Eigen::SparseMatrix<double>;
 using EdgeGenerator = function<vector<pair<int, int>>(double, int)>;
 
 struct RawData {
-    double geodesic;
-    vector<double> disordered;
-    vector<double> ordered;
-    double exact;
-    vector<double> area;
-    double length;
-    vector<double> width;
-    bool no_path;
+    double geodesic; // conductance along geodesic path between fixed endpoints
+    vector<double> disordered; // conductance across 'disordered strips' of varying length about the geodesic, i.e. strips that preserve the disorder in the lattice
+    vector<double> ordered; // conductance across 'ordered strips' of varying length about the geodesic, i.e. fully-connected strips about the geodesic
+    double exact; // conductance across the entire disordered lattice 
+    vector<double> area; // area of the strips
+    double length; // length of geodesic path between endpoints, which is also the resistance along the geodesic path
+    vector<double> width; // measure of width of strips about geodesic, with each vector component representing a strip of different length
+    bool no_path; // boolean indicating whether any path exists between the endpoints
 };
 
-// vector<pair<int, int>> edge_list_2d_site(double p, int n);
+// for a discussion of ordered vs disordered strip geometry, read Notes II
+
 vector<pair<int, int>> edge_list_2d_bond(double p, int n); // given bond probability p, generate an edge list that represents a lattice
 
 int compute_dual_area(const unordered_set<int>& strip_nodes, int n); // computes the area of the strip by counting the number of nodes in the strip's dual graph
@@ -47,15 +48,16 @@ vector<pair<int, int>> get_strip_edges_from_ids( // creates an edge list pertain
 SpMat laplacian_2d(const vector<pair<int, int>>& edges, int n); // generates the Laplacian matrix of the lattice given an edge list representing the lattice
 double resistance_distance_2d(int i, int j, const SpMat& L, double s); // computes the resistance between two endpoints across the lattice
 
-RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator edge_list_fn); 
+RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator edge_list_fn); // given endpoints and bond probability, we generate a random
+                                                                                               // disordered lattice and return conductances
 vector<RawData> simulate_all(int id_start, int id_end, double p);
 
-void write_raw_csv(const string& filename, double p, const vector<RawData>& sims);
+void write_raw_csv(const string& filename, double p, const vector<RawData>& sims); // writes the raw conductance statistics into a csv for processing
 
-const int n = 1000; // we are studying diffusion on a square, 2D n x n lattice
-const double s = 1e-2; // inverse-time parameter in Laplace Domain
-const int num_sims = 10; // number of lattice configurations for each value of p, adjust as necessary
-const int max_dist = 5;
+const int n = 1000; // we are studying diffusion on a square, 2D n x n lattice, adjust as needed
+const double s = 1e-2; // inverse-time parameter in Laplace Domain, adjust as needed
+const int num_sims = 10; // number of lattice configurations for each value of p, adjust as needed
+const int max_dist = 5; // maximum strip width, adjust as needed
 const int num_data = 10; // number of configurations for each value of p
 const double p_c = 0.5; // percolation threshold, we are interested in conductance statistics as p -> p_c
 const double ln_min = log(0.5001 - p_c);
@@ -111,13 +113,12 @@ void write_raw_csv(const string& filename, double p, const vector<RawData>& sims
     }
 }
 
-
 vector<RawData> simulate_all(int id_start, int id_end, double p) {
     vector<RawData> all_data;
     all_data.reserve(num_sims);
 
     for (int i = 0; i < num_sims; ++i) {
-        all_data.push_back(simulate_conductances(id_start, id_end, p, edge_list_2d_bond));
+        all_data.push_back(simulate_conductances(id_start, id_end, p, edge_list_2d_bond)); // generates num_sims number of configurations for conductance statistics
     }
     return all_data;
 }
