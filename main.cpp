@@ -31,7 +31,7 @@ struct RawData {
     bool no_path; // boolean indicating whether any path exists between the endpoints
 };
 
-// for a discussion of ordered vs disordered strip geometry, read Notes II
+// for a discussion of ordered vs disordered strip geometry, read Notes II in latex-notes
 
 vector<pair<int, int>> edge_list_2d_bond(double p, int n); // given bond probability p, generate an edge list that represents a lattice
 
@@ -60,7 +60,7 @@ const int num_sims = 10; // number of lattice configurations for each value of p
 const int max_dist = 5; // maximum strip width, adjust as needed
 const int num_data = 10; // number of configurations for each value of p
 const double p_c = 0.5; // percolation threshold, we are interested in conductance statistics as p -> p_c
-const double ln_min = log(0.5001 - p_c);
+const double ln_min = log(0.5001 - p_c); 
 const double ln_max = log(0.6 - p_c);
 
 int main(int argc, char** argv) {
@@ -136,6 +136,8 @@ RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator 
 
     vector<double> zeroes(max_dist, 0.0);
 
+    // use union find to check if there is any path at all
+    // if there is no path, then we don't need to run our bidirectional bfs, saving us time
     if (!uf.connected(id_start, id_end)) {
         no_path = true;
         return {0.0, zeroes, zeroes, 0.0, zeroes, 0.0, zeroes, no_path};
@@ -174,9 +176,9 @@ RawData simulate_conductances(int id_start, int id_end, double p, EdgeGenerator 
         disordered_conductances[i] = 1.0 / resistance_distance_2d(id_start, id_end, disordered_laplacians[i], s);
     }
 
-    return {1.0 / R_geodesic, 
-        disordered_conductances, 
-        ordered_conductances, 
-        1.0 / R_exact, 
-        areas, length, widths, no_path};
+    return {1.0 / R_geodesic, // conductance along geodesic
+        disordered_conductances, // conductance across disordered strips of varying length
+        ordered_conductances, // conductance across ordered strips of varying length
+        1.0 / R_exact, // conductance across the entire disordered network
+        areas, length, widths, no_path}; // additional information about strips and paths
 }
