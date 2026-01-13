@@ -19,7 +19,6 @@ The focus of this codebase is **numerical simulation and data generation**. Resu
 ---
 
 ## Repository Structure
-.
 - include/ # Header files
 - src/ # Source code modules
 - tests/ # Test code
